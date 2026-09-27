@@ -521,12 +521,29 @@ router.patch("/:id/estado", requiereRol("admin", "coordinador"), async (req, res
     return res.status(400).json({ error: "Estado no válido." });
   }
 
+  const supabase = getSupabase();
+
+  const { data: juegoActual, error: errBusqueda } = await supabase
+    .from("juegos")
+    .select("estado")
+    .eq("id", id)
+    .maybeSingle();
+  if (errBusqueda) return res.status(500).json({ error: errBusqueda.message });
+
+  // Un juego ya publicado no se puede volver a rechazar o dejar en revisión:
+  // el rechazo de una actualización no debe bajar el estado del juego publicado.
+  if (juegoActual && juegoActual.estado === "aprobado" && estado !== "aprobado") {
+    return res.status(400).json({
+      error: "El juego ya está publicado. No puedes marcarlo como rechazado o pendiente; elimínalo si necesitas retirarlo.",
+    });
+  }
+
   const actualizacion = {
     estado,
     motivo_rechazo: estado === "rechazado" ? (motivo_rechazo || "No cumple con las pautas del PAE") : null,
   };
 
-  const { data, error } = await getSupabase()
+  const { data, error } = await supabase
     .from("juegos")
     .update(actualizacion)
     .eq("id", id)
