@@ -30,18 +30,34 @@ router.post("/subir", requiereRol("admin", "cocina", "coordinador", "profesor", 
   }
 });
 
-// GET /api/archivos/servir-juego?url=...
+// GET y HEAD /api/archivos/servir-juego?url=...
 // Supabase sirve los .html publicos como text/plain (anti-XSS), lo que
 // haria que el iframe del Reproductor los mostrara como texto. Esta ruta
-// lee el archivo del bucket "juegos" con la service role key y lo sirve
-// con Content-Type text/html. Solo acepta URLs de NUESTRO bucket "juegos".
+// obtiene el archivo y lo sirve con Content-Type text/html y cabeceras
+// permisivas para iframe (evita bloqueos de CSP y X-Frame-Options).
 const SUPA_PROYECTO = "aeortsskfobulpzcjdpu.supabase.co";
 const PREFIJO_JUEGOS = "/storage/v1/object/public/juegos/";
 
-router.get("/servir-juego", async (req, res) => {
+router.all("/servir-juego", async (req, res) => {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    return res.status(405).json({ error: "Método no permitido" });
+  }
+
   const { url } = req.query || {};
   if (!url || typeof url !== "string") {
     return res.status(400).json({ error: "Falta el parámetro url" });
+  }
+
+  // Permitir explícitamente que este contenido sea embebido en iframes
+  res.removeHeader("X-Frame-Options");
+  res.removeHeader("Content-Security-Policy");
+  res.setHeader("Content-Security-Policy", "frame-ancestors *");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cache-Control", "public, max-age=3600");
+
+  if (req.method === "HEAD") {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.status(200).end();
   }
 
   // Validación estricta: solo archivos del bucket "juegos" de nuestro proyecto
@@ -63,20 +79,26 @@ router.get("/servir-juego", async (req, res) => {
   }
 
   try {
+    // 1. Intentamos descarga directa vía fetch a la URL pública de Supabase.
+    // Es rápido y no depende de permisos ni secretos de service role.
+    const respSupabase = await fetch(url);
+    if (respSupabase.ok) {
+      const buffer = Buffer.from(await respSupabase.arrayBuffer());
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(buffer);
+    }
+
+    // 2. Si fetch directo falló, intentamos con el SDK de Supabase como fallback.
     const { data, error } = await getSupabase()
       .storage.from("juegos")
       .download(ruta);
     if (error || !data) {
-      console.error("No se pudo descargar el juego:", error?.message);
+      console.error("No se pudo descargar el juego (ni fetch ni SDK):", error?.message);
       return res.status(404).json({ error: "Archivo no encontrado" });
     }
     const buffer = Buffer.from(await data.arrayBuffer());
-    // El iframe del Reproductor vive en el frontend (otro origen); helmet
-    // pondría X-Frame-Options: SAMEORIGIN y bloquearía la carga del juego.
-    res.removeHeader("X-Frame-Options");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Cache-Control", "public, max-age=3600");
-    res.send(buffer);
+    return res.send(buffer);
   } catch (err) {
     console.error("Error sirviendo el juego:", err);
     res.status(500).json({ error: "Error al servir el juego" });

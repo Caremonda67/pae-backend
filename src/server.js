@@ -43,20 +43,19 @@ app.set("trust proxy", 1);
 // Debe ser el primer middleware para que todas las respuestas incluyan cabeceras CORS.
 app.use(cors({
   origin: (process.env.FRONTEND_URL || "").replace(/\/+$/, "") || true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
   credentials: true,
 }));
 
-// helmet: headers de seguridad por defecto (XSS, sniffing, frameguard...).
-//   contentSecurityPolicy se apaga: este backend solo responde JSON (no
-//   sirve HTML), asi que la CSP no le protejeria nada. La CSP del sitio se
-//   debe definir en el deploy del frontend (SPA servido por Vercel/Render),
-//   no aqui.
+// helmet: headers de seguridad por defecto (XSS, sniffing...).
+//   contentSecurityPolicy y frameguard se desactivan para permitir
+//   que las rutas como /api/archivos/servir-juego gestionen el embebido en iframe.
 //   crossOriginResourcePolicy se apaga para que las imagenes de
 //   Supabase Storage se puedan cargar desde el navegador.
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginResourcePolicy: false,
+  frameguard: false,
 }));
 
 // Rate limit global: 200 peticiones cada minuto por IP. Protege
